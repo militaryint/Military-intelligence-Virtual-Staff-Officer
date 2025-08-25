@@ -1,17 +1,13 @@
 import streamlit as st
-from langchain.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.chains import ConversationalRetrievalChain
-from langchain.llms import HuggingFaceHub
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
 
-st.set_page_config(page_title="Virtual Teacher", page_icon="📘")
+# ---------------- APP ----------------
+st.title("📘 Military Intelligence Virtual Staff Officer")
 
-st.title("📘 Virtual PDF Teacher")
-st.write("Upload a PDF and ask questions. Powered by Hugging Face + LangChain.")
-
-uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
 if uploaded_file:
     # Load PDF
@@ -22,25 +18,18 @@ if uploaded_file:
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     docs = text_splitter.split_documents(documents)
 
-    # Embeddings + Vector DB
-    embeddings = HuggingFaceEmbeddings()
-    db = FAISS.from_documents(docs, embeddings)
+    # Embeddings
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-    # Hugging Face model (free)
-    llm = HuggingFaceHub(
-        repo_id="google/flan-t5-base",  
-        model_kwargs={"temperature": 0, "max_length": 512}
-    )
+    # Vectorstore
+    vectorstore = FAISS.from_documents(docs, embeddings)
 
-    qa = ConversationalRetrievalChain.from_llm(llm, db.as_retriever())
+    st.success("✅ PDF processed and stored in vector database!")
 
-    st.success("✅ PDF processed successfully! Ask away.")
-
-    if "history" not in st.session_state:
-        st.session_state.history = []
-
-    query = st.text_input("Ask a question:")
+    # Chat input
+    query = st.text_input("Ask a question about your PDF:")
     if query:
-        result = qa({"question": query, "chat_history": st.session_state.history})
-        st.session_state.history.append((query, result["answer"]))
-        st.write("**Answer:**", result["answer"])
+        results = vectorstore.similarity_search(query, k=3)
+        st.subheader("🔍 Results")
+        for i, res in enumerate(results, start=1):
+            st.write(f"**{i}.** {res.page_content}")
