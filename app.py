@@ -6,7 +6,7 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 # ---------------- CONFIG ----------------
-SECRET_KEY = "MYSECRET123"  # change this to your private key
+SECRET_KEY = "TACHUMINT"  # change this to your private key
 DATA_FOLDER = "my_training_data"
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
