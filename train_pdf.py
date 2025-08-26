@@ -1,4 +1,6 @@
 import streamlit as st
+st.write("DEBUG: This is train_pdf.py running")
+import streamlit as st
 import os
 import pickle
 from langchain_community.document_loaders import PyPDFLoader
