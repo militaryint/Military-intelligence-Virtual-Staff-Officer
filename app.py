@@ -44,11 +44,16 @@ def train_pdf(uploaded_file):
     vectorstore.save_local(DB_PATH)
     return vectorstore
 
-def ask_llm(question, context):
-    """Generate answer using Flan-T5."""
-    prompt = f"Context:\n{context}\n\nQuestion: {question}\nAnswer:"
-    result = llm_pipeline(prompt, max_length=256, clean_up_tokenization_spaces=True)
+def ask_llm(question, context, chat_history):
+    """Generate answer using Flan-T5 with chat history."""
+    history_text = "\n".join([f"User: {h[0]}\nAssistant: {h[1]}" for h in chat_history])
+    prompt = f"{history_text}\nContext:\n{context}\n\nUser: {question}\nAssistant:"
+    result = llm_pipeline(prompt, max_length=300, clean_up_tokenization_spaces=True)
     return result[0]["generated_text"]
+
+# ---------------- SESSION STATE ----------------
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
 # ---------------- APP UI ----------------
 st.sidebar.header("📂 Upload & Train PDF")
@@ -72,14 +77,17 @@ if vectorstore is None:
 else:
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     query = st.text_input("Ask a question:")
+
     if query:
         results = retriever.get_relevant_documents(query)
         context = "\n".join([doc.page_content for doc in results])
-        answer = ask_llm(query, context)
 
-        st.subheader("🤖 Answer")
-        st.write(answer)
+        answer = ask_llm(query, context, st.session_state.chat_history)
 
-        with st.expander("📄 Retrieved context"):
-            for i, res in enumerate(results, start=1):
-                st.write(f"**{i}.** {res.page_content}")
+        # Save in chat history
+        st.session_state.chat_history.append((query, answer))
+
+    # Display chat history
+    for q, a in st.session_state.chat_history:
+        st.markdown(f"**🧑 You:** {q}")
+        st.markdown(f"**🤖 Assistant:** {a}")
