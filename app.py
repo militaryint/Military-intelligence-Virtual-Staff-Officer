@@ -4,9 +4,10 @@ import os
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+import fitz  # PyMuPDF for PDF reading
 
 # ---------------- CONFIG ----------------
-SECRET_KEY = "TACHUMINT"  # change this to your private key
+SECRET_KEY = st.secrets["app_key"]  # Stored in Streamlit Secrets
 DATA_FOLDER = "my_training_data"
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
@@ -14,8 +15,8 @@ os.makedirs(DATA_FOLDER, exist_ok=True)
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # ---------------- STREAMLIT UI ----------------
-st.set_page_config(page_title="Private Chatbot", layout="centered")
-st.title("🔒 Private Chatbot (Only MyData Files Allowed)")
+st.set_page_config(page_title="Private PDF Chatbot", layout="centered")
+st.title("🔒 Private PDF Chatbot")
 
 # 1. Ask for secret key
 user_key = st.text_input("Enter Access Key", type="password")
@@ -23,13 +24,29 @@ if user_key != SECRET_KEY:
     st.warning("Access denied. Enter correct key.")
     st.stop()
 
-# 2. File uploader (ONLY .mydata files allowed)
-uploaded_file = st.file_uploader("Upload your .mydata file", type=["mydata"])
-if uploaded_file is not None:
-    file_path = os.path.join(DATA_FOLDER, uploaded_file.name)
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    st.success(f"✅ Saved {uploaded_file.name}")
+# 2. PDF uploader (only available if key correct)
+uploaded_pdf = st.file_uploader("Upload your PDF", type=["pdf"])
+if uploaded_pdf is not None:
+    pdf_path = os.path.join(DATA_FOLDER, uploaded_pdf.name)
+    with open(pdf_path, "wb") as f:
+        f.write(uploaded_pdf.getbuffer())
+
+    # Convert PDF → .mydata
+    doc = fitz.open(pdf_path)
+    pages_data = []
+    for page in doc:
+        text = page.get_text("text").strip()
+        if text:
+            pages_data.append({"content": text})
+    doc.close()
+
+    # Save .mydata
+    mydata_name = uploaded_pdf.name.replace(".pdf", ".mydata")
+    mydata_path = os.path.join(DATA_FOLDER, mydata_name)
+    with open(mydata_path, "w", encoding="utf-8") as f:
+        json.dump(pages_data, f, ensure_ascii=False, indent=2)
+
+    st.success(f"✅ PDF converted and saved as {mydata_name}")
 
 # 3. Load all .mydata files into memory
 documents = []
@@ -48,7 +65,7 @@ for fname in os.listdir(DATA_FOLDER):
 if documents:
     doc_embeddings = embedder.encode(documents)
 else:
-    st.warning("No data loaded yet. Please upload your .mydata files.")
+    st.warning("No data loaded yet. Please upload a PDF.")
     st.stop()
 
 # 5. Chat interface
