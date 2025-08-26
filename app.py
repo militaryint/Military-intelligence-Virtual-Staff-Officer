@@ -3,27 +3,27 @@ import os
 import tempfile
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
 # ---------------- CONFIG ----------------
-SECRET_KEY = st.secrets["app_key"]  # Stored securely in Streamlit Cloud
-DATA_FOLDER = "my_training_data"
-os.makedirs(DATA_FOLDER, exist_ok=True)
+SECRET_KEY = st.secrets["app_key"]  # Store in Streamlit Secrets TOML
+DB_PATH = "faiss_store"
 
-# ---------------- STREAMLIT UI ----------------
-st.set_page_config(page_title="Secure PDF Chatbot", layout="centered")
-st.title("🔒 Secure PDF Chatbot")
+st.set_page_config(page_title="Secure PDF Trainer & Chatbot", layout="centered")
+st.title("🔒 Secure PDF Trainer & Chatbot")
 
-# 1. Ask for secret key
+# ---------------- SECRET KEY CHECK ----------------
 user_key = st.text_input("Enter Access Key", type="password")
 if user_key != SECRET_KEY:
     st.warning("Access denied. Enter correct key.")
     st.stop()
 
-# 2. PDF uploader (only visible after correct key)
-uploaded_file = st.file_uploader("Upload your PDF", type=["pdf"])
+# ---------------- TRAIN PDF SECTION ----------------
+st.header("📘 Train with a PDF")
 
+uploaded_file = st.file_uploader("Upload a PDF to train", type=["pdf"])
 if uploaded_file:
     try:
         # Save uploaded file to a temporary file
@@ -31,36 +31,72 @@ if uploaded_file:
             tmp_file.write(uploaded_file.read())
             temp_path = tmp_file.name
 
-        # Load PDF using PyPDFLoader
+        # Load PDF
         loader = PyPDFLoader(temp_path)
         documents = loader.load()
 
-        # Split text
+        # Split into chunks
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         docs = text_splitter.split_documents(documents)
 
-        # Create embeddings
+        # Embeddings
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        vectorstore = FAISS.from_documents(docs, embeddings)
 
-        # Save vector store for later use
-        vectorstore.save_local(os.path.join(DATA_FOLDER, "pdf_vectors"))
-        st.success(f"✅ PDF '{uploaded_file.name}' uploaded and processed successfully!")
+        # Create or update FAISS vector store
+        if os.path.exists(DB_PATH):
+            vectorstore = FAISS.load_local(DB_PATH, embeddings, allow_dangerous_deserialization=True)
+            vectorstore.add_documents(docs)
+        else:
+            vectorstore = FAISS.from_documents(docs, embeddings)
+
+        # Save vectorstore
+        vectorstore.save_local(DB_PATH)
+        st.success(f"✅ PDF '{uploaded_file.name}' trained and stored in FAISS database!")
 
     except Exception as e:
         st.error(f"❌ Error processing PDF: {e}")
 
-# 3. Chat interface
-query = st.text_input("Ask a question about your PDF:")
+# ---------------- CHAT SECTION ----------------
+st.header("💬 Chat with your Trained PDFs")
+
+if not os.path.exists(DB_PATH):
+    st.warning("⚠️ No trained database found! Please upload and train a PDF first.")
+    st.stop()
+
+# Load embeddings + FAISS
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+vectorstore = FAISS.load_local(DB_PATH, embeddings, allow_dangerous_deserialization=True)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+# Load local model (Flan-T5)
+@st.cache_resource
+def load_llm():
+    model_name = "google/flan-t5-base"
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    pipe = pipeline("text2text-generation", model=model, tokenizer=tokenizer)
+    return pipe
+
+llm_pipeline = load_llm()
+
+def ask_llm(question, context):
+    """Feed question + context to Flan-T5."""
+    prompt = f"Context:\n{context}\n\nQuestion: {question}\nAnswer:"
+    result = llm_pipeline(prompt, max_length=256, clean_up_tokenization_spaces=True)
+    return result[0]["generated_text"]
+
+# Chat input
+query = st.text_input("💡 Ask a question about your trained PDFs:")
+
 if query:
-    try:
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        vectorstore = FAISS.load_local(os.path.join(DATA_FOLDER, "pdf_vectors"), embeddings, allow_dangerous_deserialization=True)
-        results = vectorstore.similarity_search(query, k=1)
-        if results:
-            st.markdown("**Answer:**")
-            st.write(results[0].page_content)
-        else:
-            st.write("No matching content found.")
-    except Exception as e:
-        st.error(f"❌ Error during search: {e}")
+    results = retriever.get_relevant_documents(query)
+    context = "\n".join([doc.page_content for doc in results])
+
+    answer = ask_llm(query, context)
+
+    st.subheader("🤖 Answer")
+    st.write(answer)
+
+    with st.expander("📄 Retrieved context"):
+        for i, res in enumerate(results, start=1):
+            st.write(f"**{i}.** {res.page_content}")
