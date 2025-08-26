@@ -1,4 +1,6 @@
 import streamlit as st
+st.write("DEBUG: This is chat.py running")
+import streamlit as st
 import os
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
