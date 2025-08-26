@@ -1,88 +1,66 @@
 import streamlit as st
-import json
 import os
-from sentence_transformers import SentenceTransformer
-import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
-import fitz  # PyMuPDF for PDF reading
-
-# ---------------- DEBUG ----------------
-st.write("✅ DEBUG: Secure PDF Chatbot version loaded")  # Check this appears in deployed app
+import tempfile
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
 
 # ---------------- CONFIG ----------------
-# Get secret key from Streamlit secrets
-SECRET_KEY = st.secrets["app_key"]
-
+SECRET_KEY = st.secrets["app_key"]  # Stored securely in Streamlit Cloud
 DATA_FOLDER = "my_training_data"
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
-# Embedding model for Q&A
-embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
 # ---------------- STREAMLIT UI ----------------
-st.set_page_config(page_title="Private PDF Chatbot", layout="centered")
-st.title("🔒 Private PDF Chatbot")
+st.set_page_config(page_title="Secure PDF Chatbot", layout="centered")
+st.title("🔒 Secure PDF Chatbot")
 
 # 1. Ask for secret key
 user_key = st.text_input("Enter Access Key", type="password")
-
-# Hide everything else unless key is correct
 if user_key != SECRET_KEY:
     st.warning("Access denied. Enter correct key.")
     st.stop()
 
-# 2. PDF uploader (only visible if key correct)
-uploaded_pdf = st.file_uploader("Upload your PDF", type=["pdf"])
-if uploaded_pdf is not None:
-    pdf_path = os.path.join(DATA_FOLDER, uploaded_pdf.name)
-    with open(pdf_path, "wb") as f:
-        f.write(uploaded_pdf.getbuffer())
+# 2. PDF uploader (only visible after correct key)
+uploaded_file = st.file_uploader("Upload your PDF", type=["pdf"])
 
-    # Convert PDF → .mydata
-    doc = fitz.open(pdf_path)
-    pages_data = []
-    for page in doc:
-        text = page.get_text("text").strip()
-        if text:
-            pages_data.append({"content": text})
-    doc.close()
+if uploaded_file:
+    try:
+        # Save uploaded file to a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+            tmp_file.write(uploaded_file.read())
+            temp_path = tmp_file.name
 
-    # Save .mydata
-    mydata_name = uploaded_pdf.name.replace(".pdf", ".mydata")
-    mydata_path = os.path.join(DATA_FOLDER, mydata_name)
-    with open(mydata_path, "w", encoding="utf-8") as f:
-        json.dump(pages_data, f, ensure_ascii=False, indent=2)
+        # Load PDF using PyPDFLoader
+        loader = PyPDFLoader(temp_path)
+        documents = loader.load()
 
-    st.success(f"✅ PDF converted and saved as {mydata_name}")
+        # Split text
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        docs = text_splitter.split_documents(documents)
 
-# 3. Load all .mydata files into memory
-documents = []
-for fname in os.listdir(DATA_FOLDER):
-    if fname.endswith(".mydata"):
-        with open(os.path.join(DATA_FOLDER, fname), "r", encoding="utf-8") as f:
-            try:
-                pages = json.load(f)
-                for p in pages:
-                    if "content" in p and p["content"].strip():
-                        documents.append(p["content"])
-            except:
-                st.error(f"❌ Could not read {fname} (invalid format)")
+        # Create embeddings
+        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        vectorstore = FAISS.from_documents(docs, embeddings)
 
-# 4. If we have data, create embeddings
-if documents:
-    doc_embeddings = embedder.encode(documents)
-else:
-    st.warning("No data loaded yet. Please upload a PDF.")
-    st.stop()
+        # Save vector store for later use
+        vectorstore.save_local(os.path.join(DATA_FOLDER, "pdf_vectors"))
+        st.success(f"✅ PDF '{uploaded_file.name}' uploaded and processed successfully!")
 
-# 5. Chat interface
-st.subheader("💬 Ask a Question")
-query = st.text_input("Your question:")
+    except Exception as e:
+        st.error(f"❌ Error processing PDF: {e}")
+
+# 3. Chat interface
+query = st.text_input("Ask a question about your PDF:")
 if query:
-    q_emb = embedder.encode([query])
-    sims = cosine_similarity(q_emb, doc_embeddings)[0]
-    best_idx = np.argmax(sims)
-    best_answer = documents[best_idx]
-
-    st.markdown("**Answer:**")
-    st.write(best_answer)
+    try:
+        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        vectorstore = FAISS.load_local(os.path.join(DATA_FOLDER, "pdf_vectors"), embeddings, allow_dangerous_deserialization=True)
+        results = vectorstore.similarity_search(query, k=1)
+        if results:
+            st.markdown("**Answer:**")
+            st.write(results[0].page_content)
+        else:
+            st.write("No matching content found.")
+    except Exception as e:
+        st.error(f"❌ Error during search: {e}")
