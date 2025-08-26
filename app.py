@@ -1,93 +1,64 @@
 import streamlit as st
+import json
 import os
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
+from sentence_transformers import SentenceTransformer
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
 # ---------------- CONFIG ----------------
-DB_PATH = "faiss_store"
+SECRET_KEY = "MYSECRET123"  # change this to your private key
+DATA_FOLDER = "my_training_data"
+os.makedirs(DATA_FOLDER, exist_ok=True)
 
-st.set_page_config(page_title="PDF Trainer & Chat", page_icon="📘")
-st.title("📘 Military Intelligence Virtual Staff Officer")
+# Embedding model for Q&A
+embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# ---------------- FUNCTIONS ----------------
-@st.cache_resource
-def load_llm():
-    """Load local Flan-T5 model."""
-    model_name = "google/flan-t5-base"
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    pipe = pipeline("text2text-generation", model=model, tokenizer=tokenizer)
-    return pipe
+# ---------------- STREAMLIT UI ----------------
+st.set_page_config(page_title="Private Chatbot", layout="centered")
+st.title("🔒 Private Chatbot (Only MyData Files Allowed)")
 
-def train_pdf(uploaded_file):
-    """Train FAISS DB with uploaded PDF."""
-    with open("temp.pdf", "wb") as f:
-        f.write(uploaded_file.read())
+# 1. Ask for secret key
+user_key = st.text_input("Enter Access Key", type="password")
+if user_key != SECRET_KEY:
+    st.warning("Access denied. Enter correct key.")
+    st.stop()
 
-    loader = PyPDFLoader("temp.pdf")
-    documents = loader.load()
+# 2. File uploader (ONLY .mydata files allowed)
+uploaded_file = st.file_uploader("Upload your .mydata file", type=["mydata"])
+if uploaded_file is not None:
+    file_path = os.path.join(DATA_FOLDER, uploaded_file.name)
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    st.success(f"✅ Saved {uploaded_file.name}")
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    docs = text_splitter.split_documents(documents)
+# 3. Load all .mydata files into memory
+documents = []
+for fname in os.listdir(DATA_FOLDER):
+    if fname.endswith(".mydata"):
+        with open(os.path.join(DATA_FOLDER, fname), "r", encoding="utf-8") as f:
+            try:
+                pages = json.load(f)
+                for p in pages:
+                    if "content" in p and p["content"].strip():
+                        documents.append(p["content"])
+            except:
+                st.error(f"❌ Could not read {fname} (invalid format)")
 
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-    if os.path.exists(DB_PATH):
-        vectorstore = FAISS.load_local(DB_PATH, embeddings, allow_dangerous_deserialization=True)
-        vectorstore.add_documents(docs)
-    else:
-        vectorstore = FAISS.from_documents(docs, embeddings)
-
-    vectorstore.save_local(DB_PATH)
-    return vectorstore
-
-def ask_llm(question, context, chat_history):
-    """Generate answer using Flan-T5 with chat history."""
-    history_text = "\n".join([f"User: {h[0]}\nAssistant: {h[1]}" for h in chat_history])
-    prompt = f"{history_text}\nContext:\n{context}\n\nUser: {question}\nAssistant:"
-    result = llm_pipeline(prompt, max_length=300, clean_up_tokenization_spaces=True)
-    return result[0]["generated_text"]
-
-# ---------------- SESSION STATE ----------------
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
-# ---------------- APP UI ----------------
-st.sidebar.header("📂 Upload & Train PDF")
-uploaded_file = st.sidebar.file_uploader("Upload a PDF", type=["pdf"])
-
-if uploaded_file:
-    st.sidebar.success(f"✅ {uploaded_file.name} uploaded")
-    vectorstore = train_pdf(uploaded_file)
+# 4. If we have data, create embeddings
+if documents:
+    doc_embeddings = embedder.encode(documents)
 else:
-    if os.path.exists(DB_PATH):
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        vectorstore = FAISS.load_local(DB_PATH, embeddings, allow_dangerous_deserialization=True)
-    else:
-        vectorstore = None
+    st.warning("No data loaded yet. Please upload your .mydata files.")
+    st.stop()
 
-llm_pipeline = load_llm()
+# 5. Chat interface
+st.subheader("💬 Ask a Question")
+query = st.text_input("Your question:")
+if query:
+    q_emb = embedder.encode([query])
+    sims = cosine_similarity(q_emb, doc_embeddings)[0]
+    best_idx = np.argmax(sims)
+    best_answer = documents[best_idx]
 
-st.header("💬 Chat with your trained PDFs")
-if vectorstore is None:
-    st.warning("Please upload and train a PDF first.")
-else:
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-    query = st.text_input("Ask a question:")
-
-    if query:
-        results = retriever.get_relevant_documents(query)
-        context = "\n".join([doc.page_content for doc in results])
-
-        answer = ask_llm(query, context, st.session_state.chat_history)
-
-        # Save in chat history
-        st.session_state.chat_history.append((query, answer))
-
-    # Display chat history
-    for q, a in st.session_state.chat_history:
-        st.markdown(f"**🧑 You:** {q}")
-        st.markdown(f"**🤖 Assistant:** {a}")
+    st.markdown("**Answer:**")
+    st.write(best_answer)
