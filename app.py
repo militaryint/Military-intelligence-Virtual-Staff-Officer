@@ -6,8 +6,13 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import fitz  # PyMuPDF for PDF reading
 
+# ---------------- DEBUG ----------------
+st.write("✅ DEBUG: Secure PDF Chatbot version loaded")  # Check this appears in deployed app
+
 # ---------------- CONFIG ----------------
-SECRET_KEY = st.secrets["app_key"]  # Stored in Streamlit Secrets
+# Get secret key from Streamlit secrets
+SECRET_KEY = st.secrets["app_key"]
+
 DATA_FOLDER = "my_training_data"
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
@@ -20,11 +25,13 @@ st.title("🔒 Private PDF Chatbot")
 
 # 1. Ask for secret key
 user_key = st.text_input("Enter Access Key", type="password")
+
+# Hide everything else unless key is correct
 if user_key != SECRET_KEY:
     st.warning("Access denied. Enter correct key.")
     st.stop()
 
-# 2. PDF uploader (only available if key correct)
+# 2. PDF uploader (only visible if key correct)
 uploaded_pdf = st.file_uploader("Upload your PDF", type=["pdf"])
 if uploaded_pdf is not None:
     pdf_path = os.path.join(DATA_FOLDER, uploaded_pdf.name)
