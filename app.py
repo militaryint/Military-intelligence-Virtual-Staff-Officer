@@ -8,10 +8,10 @@ from langchain_community.vectorstores import FAISS
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
 # ---------------- CONFIG ----------------
-SECRET_KEY = st.secrets["app_key"]  # Stored securely in Streamlit Secrets TOML
+SECRET_KEY = st.secrets["app_key"]
 DB_PATH = "faiss_store"
 
-st.set_page_config(page_title="Secure PDF Trainer & Chatbot", layout="centered")
+st.set_page_config(page_title="Secure PDF Chatbot", layout="centered")
 st.title("🔒 Secure Hugging Face Style PDF Chatbot")
 
 # ---------------- SECRET KEY CHECK ----------------
@@ -28,18 +28,14 @@ if is_admin:
                 tmp_file.write(uploaded_file.read())
                 temp_path = tmp_file.name
 
-            # Load PDF
             loader = PyPDFLoader(temp_path)
             documents = loader.load()
 
-            # Split into chunks
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
             docs = text_splitter.split_documents(documents)
 
-            # Embeddings
             embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-            # Create or update FAISS vector store
             if os.path.exists(DB_PATH):
                 vectorstore = FAISS.load_local(DB_PATH, embeddings, allow_dangerous_deserialization=True)
                 vectorstore.add_documents(docs)
