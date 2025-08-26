@@ -8,7 +8,7 @@ from langchain_community.vectorstores import FAISS
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
 # ---------------- CONFIG ----------------
-SECRET_KEY = st.secrets["app_key"]  # Store in Streamlit Secrets TOML
+SECRET_KEY = st.secrets["app_key"]  # Stored in Streamlit Secrets TOML
 DB_PATH = "faiss_store"
 
 st.set_page_config(page_title="Secure PDF Trainer & Chatbot", layout="centered")
@@ -52,6 +52,9 @@ if uploaded_file:
         # Save vectorstore
         vectorstore.save_local(DB_PATH)
         st.success(f"✅ PDF '{uploaded_file.name}' trained and stored in FAISS database!")
+
+        # Clean up temp file
+        os.remove(temp_path)
 
     except Exception as e:
         st.error(f"❌ Error processing PDF: {e}")
